@@ -12,7 +12,8 @@
   {
     "imports": {
       "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"
     }
   }
   </script>
@@ -67,6 +68,17 @@
       <button type="button" id="beer-clear">Vider la table</button>
     </div>
     <button type="button" id="leave">Quitter la table</button>
+  </div>
+
+  <!-- Dice: picker on the left, results on the right, away from the table -->
+  <div id="dice-ui" class="hidden">
+    <section id="dice-panel" aria-label="Lancer de dés">
+      <div id="dice-picks"></div>
+      <button type="button" id="dice-roll" class="primary">Lancer</button>
+      <button type="button" id="dice-secret" class="hidden" title="Toi seul vois le résultat">🔒 Secret</button>
+      <button type="button" id="dice-clear" title="Effacer la sélection">Effacer</button>
+    </section>
+    <ol id="dice-log" aria-live="polite" aria-label="Derniers lancers"></ol>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>

@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DiceTray, DICE_TYPES } from './dice.js';
 
-// ---------- Easy-to-change settings ----------
+// Easy-to-change settings
 const TABLE_FILE       = 'Models/Table.glb';
 const BEER_FULL_FILE   = 'Models/Beer_full.glb';
 const BEER_EMPTY_FILE  = 'Models/Beer_empty.glb';
@@ -17,11 +18,15 @@ const SEAT_U = 0.5, SEAT_V = 0.68;     // nameplate position (same values on the
 const DROP_HU = 0.27, DROP_HV = 0.22; // area around YOUR OWN nameplate where you can drink
 const LIFT_HELD = BEER_HEIGHT * 0.5;  // the beer lifts up while held
 const DRINK_MS = 2200;                // animation duration (same value on the server)
+const DICE_ZONE_U = 0.6;              // dice roll in the middle of the table, between the nameplates
+const MAX_DICE = 10;                  // per roll, a d100 counts as two dice (same value on the server)
+const DICE_LOG_SIZE = 3;              // results shown at once
+const DICE_LOG_MS = 40000;            // a result disappears after this long
 
 const ICONS  = ['🧙', '⚔️', '🏹', '🐉', '🗡️', '🛡️', '🔮', '🍺', '🎲', '🦉', '🧝', '🧛'];
 const COLORS = ['#c0392b', '#e67e22', '#d4ac0d', '#27ae60', '#2980b9', '#8e44ad', '#2c3e50', '#d35d9b'];
 
-// ---------- Scene ----------
+// Scene
 const canvas = document.getElementById('scene');
 const message = document.getElementById('message');
 
@@ -42,7 +47,7 @@ sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -10, right: 10, top: 10, bottom: -10 });
 scene.add(sun);
 
-// ---------- Table ----------
+// Table
 let tableReady = false;
 let tableBox = new THREE.Box3(
   new THREE.Vector3(-TABLE_SIZE / 2, -0.5, -TABLE_SIZE / 4),
@@ -109,8 +114,9 @@ loader.load(
   }
 );
 
-// ---------- Beers ----------
+// Beers
 const beerTemplates = {}; // 'full' / 'empty' -> 3D object ready to clone
+let beerRadius = BEER_HEIGHT * 0.35;
 
 function loadBeer(type, file) {
   loader.load(
@@ -123,6 +129,8 @@ function loadBeer(type, file) {
       obj.position.x -= c.x;      // centered
       obj.position.z -= c.z;
       obj.position.y -= box.min.y; // base resting at y = 0
+      const size = box.getSize(new THREE.Vector3());
+      beerRadius = Math.min(size.x, size.z) / 2; // without the handle, for dice to bounce on
       enableShadows(obj);
       const wrapper = new THREE.Group();
       wrapper.add(obj);
@@ -189,7 +197,7 @@ function updateBeers(dt, now) {
   }
 }
 
-// ---------- Player nameplates ----------
+// Player nameplates
 function roundedRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -247,6 +255,11 @@ function makePlateTexture(p) {
 
 const plateGroups = []; // indexed by seat number
 
+function plateSize() {
+  const w = tableSize.x * 0.21;
+  return { w, h: w * (320 / 1024) };
+}
+
 function renderSeats(seats) {
   for (const g of plateGroups) {
     if (!g) continue;
@@ -255,8 +268,7 @@ function renderSeats(seats) {
   }
   plateGroups.length = 0;
 
-  const plateW = tableSize.x * 0.21;
-  const plateH = plateW * (320 / 1024);
+  const { w: plateW, h: plateH } = plateSize();
 
   seats.forEach((p, i) => {
     if (!p) return;
@@ -289,7 +301,7 @@ function updatePlates(dt) {
   });
 }
 
-// ---------- Shared state ----------
+// Shared state
 let state = { seats: [], beers: [] };
 let myRole = null;
 let mySeat = -1;
@@ -301,7 +313,7 @@ function refreshWorld() {
   renderBeers(state.beers);
 }
 
-// ---------- Fixed camera ----------
+// Fixed camera
 function fitCamera() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w || !h) return;
@@ -331,10 +343,11 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   updateBeers(dt, performance.now());
   updatePlates(dt);
+  tray.update(performance.now());
   renderer.render(scene, camera);
 });
 
-// ---------- Login and interface ----------
+// Login and interface
 const socket = io();
 socket.on('state', (s) => {
   state = s;
@@ -440,6 +453,8 @@ function enterTable(role, seat = -1) {
   $('hud').classList.remove('hidden');
   $('role-badge').textContent = role === 'admin' ? 'Maître du jeu' : `Joueur : ${nameInput.value.trim()}`;
   if (role === 'admin') $('admin-tools').classList.remove('hidden');
+  $('dice-ui').classList.remove('hidden');
+  $('dice-secret').classList.toggle('hidden', role !== 'admin');
 }
 
 $('login-card').addEventListener('submit', (e) => {
@@ -475,12 +490,13 @@ socket.on('disconnect', () => {
   mySeat = -1;
   $('hud').classList.add('hidden');
   $('admin-tools').classList.add('hidden');
+  $('dice-ui').classList.add('hidden');
   $('login').classList.remove('hidden');
   $('player-error').textContent = 'Connexion perdue. Reprends ta place à la table.';
 });
 
 
-// ---------- Pick up, move and drink a beer ----------
+// Pick up, move and drink a beer
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -570,3 +586,122 @@ function dropBeer() {
 }
 canvas.addEventListener('pointerup', dropBeer);
 canvas.addEventListener('pointercancel', dropBeer);
+
+
+// Dice
+const tray = new DiceTray(scene, renderer.capabilities.getMaxAnisotropy());
+
+// Where the dice can roll: the middle of the table, without touching the nameplates.
+// Players throw from their corner, the game master from the right side.
+function diceArea(seat) {
+  const top = tableBox.max.y;
+  const halfX = (tableSize.x / 2) * DICE_ZONE_U;
+  const halfZ = Math.max(tableSize.z * 0.12, (SEAT_V * tableSize.z) / 2 - plateSize().h * 0.6 - 0.2);
+  const from = seat >= 0 ? seatSpot(seat) : { u: 1, v: 0 };
+  const p = new THREE.Vector3();
+  const obstacles = state.beers.filter((b) => !b.holder).map((b) => {
+    uvToWorld(b.u, b.v, top, p);
+    return { x: p.x, z: p.z, r: beerRadius, h: BEER_HEIGHT };
+  });
+  return {
+    cx: tableCenter.x, cz: tableCenter.z, top, halfX, halfZ, obstacles,
+    fromX: tableCenter.x + Math.sign(from.u) * halfX * 0.85,
+    fromZ: tableCenter.z + Math.sign(from.v) * halfZ * 0.85,
+  };
+}
+
+socket.on('dice:rolled', (roll) => {
+  const look = { color: roll.by.color, ink: textColorFor(roll.by.color) };
+  const ms = tableReady ? tray.throw(roll.dice, roll.seed, diceArea(roll.by.seat), look) : 0;
+  setTimeout(() => addDiceLog(roll), ms); // the result shows up once the dice stop
+});
+socket.on('dice:secret', () => toast('🎲 Le maître du jeu lance des dés en secret…'));
+
+function addDiceLog(roll) {
+  if (!myRole) return;
+  const groups = {};
+  for (const d of roll.dice) (groups[d.type] ||= []).push(d.value);
+  const total = roll.dice.reduce((n, d) => n + d.value, 0);
+
+  const li = document.createElement('li');
+  li.style.borderLeftColor = roll.by.color;
+  const tot = document.createElement('span');
+  tot.className = 'total';
+  tot.textContent = total;
+  const who = document.createElement('div');
+  who.className = 'who';
+  who.textContent = `${roll.by.icon} ${roll.by.name}${roll.secret ? ' · 🔒 secret' : ''}`;
+  const detail = document.createElement('div');
+  detail.className = 'detail';
+  detail.textContent = Object.entries(groups).map(([t, v]) => `${v.length}${t} : ${v.join(', ')}`).join(' · ');
+  li.append(tot, who, detail);
+
+  const log = $('dice-log');
+  log.append(li);
+  while (log.children.length > DICE_LOG_SIZE) log.firstChild.remove();
+  setTimeout(() => { li.classList.add('old'); setTimeout(() => li.remove(), 600); }, DICE_LOG_MS);
+}
+
+// Small outlines of each die for the buttons
+const DIE_ICONS = {
+  d4: '<polygon points="12,3 21.5,20 2.5,20"/>',
+  d6: '<rect x="4" y="4" width="16" height="16" rx="2"/>',
+  d8: '<polygon points="12,2 21,12 12,22 3,12"/><line x1="3" y1="12" x2="21" y2="12"/>',
+  d10: '<polygon points="12,2 21,11 12,22 3,11"/><polyline points="3,11 12,14.5 21,11"/><line x1="12" y1="14.5" x2="12" y2="22"/>',
+  d12: '<polygon points="12,2 21.5,8.9 17.9,20.1 6.1,20.1 2.5,8.9"/><polygon points="12,7 16.3,10.2 14.6,15.3 9.4,15.3 7.7,10.2"/>',
+  d20: '<polygon points="12,2 21,7 21,17 12,22 3,17 3,7"/><polygon points="12,7 17,15 7,15"/>',
+  d100: '<polygon points="7,3 12,10 7,21 2,10"/><polygon points="17,3 22,10 17,21 12,10"/>',
+};
+
+const picked = Object.fromEntries(Object.keys(DICE_TYPES).map((t) => [t, 0]));
+const pickedCount = () => Object.entries(picked).reduce((n, [t, k]) => n + k * (t === 'd100' ? 2 : 1), 0);
+
+function updateDiceUi() {
+  for (const b of $('dice-picks').children) {
+    const n = picked[b.dataset.type];
+    b.querySelector('.count').textContent = n;
+    b.querySelector('.count').hidden = !n;
+    b.classList.toggle('picked', n > 0);
+    b.setAttribute('aria-label', `${b.dataset.type}, ${n} choisi${n > 1 ? 's' : ''}`);
+  }
+  const parts = Object.entries(picked).filter(([, n]) => n).map(([t, n]) => `${n}${t}`);
+  const what = parts.length ? parts.join(' + ') : 'Clique sur les dés à lancer';
+  $('dice-roll').title = what;
+  $('dice-roll').disabled = $('dice-secret').disabled = $('dice-clear').disabled = !parts.length;
+}
+
+for (const [type, info] of Object.entries(DICE_TYPES)) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'die-btn';
+  b.dataset.type = type;
+  b.title = `${info.hint}\nClic droit : en retirer un`;
+  b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${DIE_ICONS[type]}</svg><span>${type}</span><span class="count"></span>`;
+  b.onclick = () => {
+    if (pickedCount() + (type === 'd100' ? 2 : 1) > MAX_DICE) { toast(`${MAX_DICE} dés maximum par lancer.`); return; }
+    picked[type]++;
+    updateDiceUi();
+  };
+  b.oncontextmenu = (e) => {
+    e.preventDefault();
+    if (picked[type]) picked[type]--;
+    updateDiceUi();
+  };
+  $('dice-picks').append(b);
+}
+updateDiceUi();
+
+// The selection stays after a roll, to roll the same dice again easily
+function rollDice(secret) {
+  const dice = Object.entries(picked).flatMap(([t, n]) => Array(n).fill(t));
+  if (!dice.length) return;
+  socket.emit('dice:roll', { dice, secret }, (res) => {
+    if (res && !res.ok && res.error) toast(res.error);
+  });
+}
+$('dice-roll').onclick = () => rollDice(false);
+$('dice-secret').onclick = () => rollDice(true);
+$('dice-clear').onclick = () => {
+  for (const t in picked) picked[t] = 0;
+  updateDiceUi();
+};

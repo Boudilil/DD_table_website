@@ -1,5 +1,6 @@
 // Tavern server: serves the site and syncs players (Socket.IO)
 const path = require('path');
+const crypto = require('crypto');
 const http = require('http');
 const express = require('express');
 const { Server } = require('socket.io');
@@ -9,6 +10,10 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'donjon';
 const SEAT_COUNT = 4;
 const MAX_BEERS = 40;
 const DRINK_MS = 2200; // must match main.js
+const DICE_FACES = { d4: 4, d6: 6, d8: 8, d10: 10, d12: 12, d20: 20, d100: 100 }; // same list in dice.js
+const MAX_DICE = 10;  // per roll, a d100 counts as two dice (same value in main.js)
+const ROLL_COOLDOWN_MS = 800;
+const GM_LOOK = { name: 'Maître du jeu', color: '#f2b441', icon: '👑' };
 const ICONS = ['🧙', '⚔️', '🏹', '🐉', '🗡️', '🛡️', '🔮', '🍺', '🎲', '🦉', '🧝', '🧛'];
 
 const app = express();
@@ -17,15 +22,16 @@ const io = new Server(server);
 
 // Only serve the site files (not server.js)
 app.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
-for (const f of ['index.html', 'main.js', 'style.css']) {
+for (const f of ['index.html', 'main.js', 'dice.js', 'style.css']) {
   app.get(f === 'index.html' ? '/' : '/' + f, (req, res) => res.sendFile(path.join(__dirname, f)));
 }
 app.use('/Models', express.static(path.join(__dirname, 'Models')));
 
-// ---------- Table state (in memory) ----------
+// Table state (in memory)
 const seats = new Array(SEAT_COUNT).fill(null); // { socketId, name, color, icon }
 let beers = [];                                  // { id, type, u, v }
 let nextBeerId = 1;
+let nextRollId = 1;
 
 function publicState() {
   return {
@@ -158,6 +164,42 @@ io.on('connection', (socket) => {
     }
     broadcast();
     reply({ ok: true, message });
+  });
+
+  // Roll dice: the server picks the results so nobody can cheat.
+  // A secret roll (game master only) is only sent back to the game master.
+  socket.on('dice:roll', (data, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (!socket.data.role) return reply({ ok: false });
+    const secret = !!(data && data.secret);
+    if (secret && socket.data.role !== 'admin') return reply({ ok: false, error: 'Seul le maître du jeu peut lancer en secret.' });
+    const types = Array.isArray(data && data.dice) ? data.dice : [];
+    if (!types.length || !types.every((t) => Object.hasOwn(DICE_FACES, t))) return reply({ ok: false, error: 'Choisis au moins un dé.' });
+    if (types.reduce((n, t) => n + (t === 'd100' ? 2 : 1), 0) > MAX_DICE) {
+      return reply({ ok: false, error: `${MAX_DICE} dés maximum par lancer.` });
+    }
+    const now = Date.now();
+    if (now - (socket.data.lastRoll || 0) < ROLL_COOLDOWN_MS) return reply({ ok: false, error: 'Doucement, les dés roulent encore !' });
+    socket.data.lastRoll = now;
+
+    const by = socket.data.role === 'admin'
+      ? { ...GM_LOOK, seat: -1 }
+      : (({ name, color, icon }) => ({ name, color, icon, seat: socket.data.seat }))(seats[socket.data.seat]);
+    const roll = {
+      id: nextRollId++,
+      by,
+      secret,
+      seed: crypto.randomInt(2 ** 31), // same seed = same throw animation for everyone
+      dice: types.map((type) => ({ type, value: crypto.randomInt(1, DICE_FACES[type] + 1) })),
+    };
+    console.log(`[dés] ${by.name}${secret ? ' (secret)' : ''} : ${roll.dice.map((d) => `${d.type}=${d.value}`).join(' ')}`);
+    if (secret) {
+      socket.emit('dice:rolled', roll);
+      socket.broadcast.emit('dice:secret');
+    } else {
+      io.emit('dice:rolled', roll);
+    }
+    reply({ ok: true });
   });
 
   socket.on('disconnect', () => {
