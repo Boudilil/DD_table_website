@@ -1,0 +1,11 @@
+{
+  "name": "taverne-oneshot",
+  "version": "1.0.0",
+  "description": "Table de taverne 3D pour one-shot D&D",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}

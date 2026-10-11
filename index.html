@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Taverne - One-shot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Alegreya+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div id="message">Chargement de la table…</div>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <!-- Login screen -->
+  <main id="login">
+    <form id="login-card" autocomplete="off">
+      <h1>Table des voyageurs</h1>
+      <p class="intro">Prends place autour de la table !</p>
+
+      <label for="name">Ton pseudo</label>
+      <input id="name" type="text" maxlength="16" required>
+
+      <fieldset>
+        <legend>Couleur de ta plaque</legend>
+        <div id="colors" class="swatches"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Ton icône</legend>
+        <div id="icons" class="icons"></div>
+      </fieldset>
+
+      <div id="preview" aria-label="Aperçu de ta plaque"></div>
+
+      <p id="player-error" class="error" role="alert"></p>
+      <button type="submit" id="join-btn" class="primary">S'asseoir à la table</button>
+
+      <details id="admin-box">
+        <summary>Je suis le maître du jeu</summary>
+        <label for="admin-pass">Mot de passe</label>
+        <div class="row">
+          <input id="admin-pass" type="password" placeholder="Mot de passe">
+          <button type="button" id="admin-btn">Entrer</button>
+        </div>
+        <p id="admin-error" class="error" role="alert"></p>
+      </details>
+    </form>
+  </main>
+
+  <!-- Bar shown once logged in -->
+  <div id="hud" class="hidden">
+    <span id="role-badge"></span>
+    <div id="admin-tools" class="hidden">
+      <button type="button" id="beer-full">🍺 Poser une bière pleine</button>
+      <button type="button" id="beer-empty">Poser une bière vide</button>
+      <button type="button" id="beer-clear">Vider la table</button>
+    </div>
+    <button type="button" id="leave">Quitter la table</button>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/main.js"></script>
+</body>
+</html>
